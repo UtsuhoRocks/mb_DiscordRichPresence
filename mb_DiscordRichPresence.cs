@@ -198,12 +198,12 @@ namespace MusicBeePlugin
                 },
             };
 
-            long now = (long)DateTime.UtcNow.Subtract(new DateTime(1970, 1, 1)).TotalSeconds;
-            long duration = _mbApi.NowPlaying_GetDuration() / 1000;
-            long end = now + duration;
-
             if (songInfo.Playing)
             {
+                long now = (long)DateTime.UtcNow.Subtract(new DateTime(1970, 1, 1)).TotalSeconds;
+                long duration = _mbApi.NowPlaying_GetDuration() / 1000;
+                long end = now + duration;
+
                 long pos = _mbApi.Player_GetPosition() / 1000;
                 presence.Timestamps.Start = new DateTime(1970, 1, 1).AddSeconds(now - pos);
 
