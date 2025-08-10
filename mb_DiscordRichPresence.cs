@@ -1,20 +1,15 @@
-using System;
-using System.Drawing;
-using System.Windows.Forms;
-using System.Collections.Generic;
-
-using System.Threading.Tasks;
-
 using DiscordRPC;
-
+using DiscordRPC.Logging;
+using EpikLastFMApi;
 using Newtonsoft.Json.Linq;
+using System;
+using System.Collections.Generic;
+using System.Drawing;
+using System.IO;
 using System.Linq;
 using System.Runtime.Serialization;
-using System.IO;
-
-using EpikLastFMApi;
-using DiscordRPC.Logging;
-using System.Runtime.InteropServices;
+using System.Threading.Tasks;
+using System.Windows.Forms;
 
 namespace MusicBeePlugin
 {
@@ -33,276 +28,275 @@ namespace MusicBeePlugin
 
     public partial class Plugin
     {
-        private MusicBeeApiInterface mbApiInterface;
-        private PluginInfo about = new PluginInfo();
+        public const string ImageSize = "medium"; // small, medium, large, extralarge, mega
+
+        private readonly PluginInfo _about = new PluginInfo
+        {
+            PluginInfoVersion = PluginInfoVersion,
+            Name = "Discord Rich Presence",
+            Description = "Sets currently playing song as Discord Rich Presence",
+            Author = "Harmon758 + Kuunikal + BriannaFoxwell + Cynosphere + yui + Invalid",
+            TargetApplication = "", // current only applies to artwork, lyrics or instant messenger name that appears in the provider drop down selector or target Instant Messenger
+            Type = PluginType.General,
+            VersionMajor = 2, // your plugin version
+            VersionMinor = 0,
+            Revision = 05, // this how you do it?
+            MinInterfaceVersion = MinInterfaceVersion,
+            MinApiRevision = MinApiRevision,
+            ReceiveNotifications = ReceiveNotificationFlags.PlayerEvents | ReceiveNotificationFlags.TagEvents,
+            ConfigurationPanelHeight = 48, // height in pixels that musicbee should reserve in a panel for config settings. When set, a handle to an empty panel will be passed to the Configure function
+        };
         
-        private DiscordRpcClient rpcClient = new DiscordRpcClient("519949979176140821");
+        private readonly DiscordRpcClient _rpcClient = new DiscordRpcClient("519949979176140821")
+        {
+            Logger = new ConsoleLogger { Level = LogLevel.Warning },
+        };
 
-        private string imageSize = "medium"; // small, medium, large, extralarge, mega
+        private readonly LastFMApi _fmApi = new LastFMApi("cba04ed41dff8bfb9c10835ee747ba94"); // LastFM Api key taken from MusicBee
 
-        private static Dictionary<string, string> albumArtCache = new Dictionary<string, string>();
+        private readonly Dictionary<string, string> _albumArtCache = new Dictionary<string, string>();
 
-        public Plugin.Configuration config = new Plugin.Configuration();
-        public Plugin.Configuration newConfig = new Plugin.Configuration();
+        private MusicBeeApiInterface _mbApi;
+        private Plugin.Configuration _config = new Plugin.Configuration();
+        private Plugin.Configuration _newConfig = new Plugin.Configuration();
 
-        private LastFM_API FmApi = new LastFM_API("cba04ed41dff8bfb9c10835ee747ba94"); // LastFM Api key taken from MusicBee
         public PluginInfo Initialise(IntPtr apiInterfacePtr)
         {
-            mbApiInterface = new MusicBeeApiInterface();
-            mbApiInterface.Initialise(apiInterfacePtr);
-            about.PluginInfoVersion = PluginInfoVersion;
-            about.Name = "Discord Rich Presence";
-            about.Description = "Sets currently playing song as Discord Rich Presence";
-            about.Author = "Harmon758 + Kuunikal + BriannaFoxwell";
-            about.TargetApplication = "";   // current only applies to artwork, lyrics or instant messenger name that appears in the provider drop down selector or target Instant Messenger
-            about.Type = PluginType.General;
-            about.VersionMajor = 2;  // your plugin version
-            about.VersionMinor = 0;
-            about.Revision = 05; // this how you do it?
-            about.MinInterfaceVersion = MinInterfaceVersion;
-            about.MinApiRevision = MinApiRevision;
-            about.ReceiveNotifications = (ReceiveNotificationFlags.PlayerEvents | ReceiveNotificationFlags.TagEvents);
-            about.ConfigurationPanelHeight = 48;   // height in pixels that musicbee should reserve in a panel for config settings. When set, a handle to an empty panel will be passed to the Configure function
+            _mbApi = new MusicBeeApiInterface();
+            _mbApi.Initialise(apiInterfacePtr);
 
-            if (!rpcClient.IsInitialized)
-            {
-                rpcClient.Logger = new ConsoleLogger() { Level = LogLevel.Warning };
-                rpcClient.Initialize();
-            }
+            if (!_rpcClient.IsInitialized)
+                _rpcClient.Initialize();
 
-            return about;
+            return _about;
         }
 
-        private async Task FetchArt(string track, string artist, string albumArtist, string album)
+        private async Task FetchArtAsync(string track, string artist, string albumArtist, string album)
         {
             string key = $"{albumArtist}_{album}";
 
-            if (!albumArtCache.ContainsKey(key))
+            if (!_albumArtCache.ContainsKey(key))
             {
-                string mainArtist = albumArtist.Split(new [] { ", ", "; " }, StringSplitOptions.None)[0];
+                string mainArtist = albumArtist.Split(new[] { ", ", "; " }, StringSplitOptions.None)[0];
 
-                string url = await FmApi.AlbumGetInfo(AlbumGetInfo_FindAlbumImg, album, mainArtist);
-
-                if (string.IsNullOrEmpty(url))
-                    url = await FmApi.AlbumGetInfo(AlbumGetInfo_FindAlbumImg, album, albumArtist);
+                string url = await _fmApi.AlbumGetInfoAsync(AlbumGetInfo_FindAlbumImg, album, mainArtist);
 
                 if (string.IsNullOrEmpty(url))
-                    url = await FmApi.AlbumGetInfo(AlbumGetInfo_FindAlbumImg, album, artist, track);
+                    url = await _fmApi.AlbumGetInfoAsync(AlbumGetInfo_FindAlbumImg, album, albumArtist);
 
                 if (string.IsNullOrEmpty(url))
-                    url = await FmApi.AlbumSearch(AlbumSearch_FindAlbumImg, album, mainArtist);
+                    url = await _fmApi.AlbumGetInfoAsync(AlbumGetInfo_FindAlbumImg, album, artist, track);
 
                 if (string.IsNullOrEmpty(url))
-                    url = await FmApi.AlbumSearch(AlbumSearch_FindAlbumImg, album);
+                    url = await _fmApi.AlbumSearchAsync(AlbumSearch_FindAlbumImg, album, mainArtist);
 
                 if (string.IsNullOrEmpty(url))
-                    albumArtCache.Add(key, "unknown");
+                    url = await _fmApi.AlbumSearchAsync(AlbumSearch_FindAlbumImg, album);
+
+                if (string.IsNullOrEmpty(url))
+                    _albumArtCache.Add(key, "unknown");
                 else
-                    albumArtCache.Add(key, url);
+                    _albumArtCache.Add(key, url);
             }
         }
 
-        private string AlbumSearch_FindAlbumImg(JObject Json, string ArtistRequest, string AlbumRequest)
+        private string AlbumSearch_FindAlbumImg(JObject json, string artistRequest, string albumRequest)
         {
-            Dictionary<string, string> ImageList = new Dictionary<string, string>();
+            Dictionary<string, string> imageList = new Dictionary<string, string>();
+            JArray albums = (json as dynamic).results.albummatches.album;
 
-            dynamic DJson = Json;
-
-            JArray Albums = DJson.results.albummatches.album;
-
-            foreach (dynamic Album in Albums)
+            foreach (dynamic album in albums)
             {
-                string Artist = Album.artist;
-                bool ArtistUnknown = string.IsNullOrWhiteSpace(ArtistRequest) | string.IsNullOrWhiteSpace(Artist);
-                bool IsVarious = (ArtistRequest.ToLower() == "va" | ArtistRequest.ToLower() == "various artists");
+                string artist = album.artist;
+                bool artistUnknown = string.IsNullOrWhiteSpace(artistRequest) || string.IsNullOrWhiteSpace(artist);
+                bool isVarious = artistRequest.ToLower() == "va" || artistRequest.ToLower() == "various artists";
 
-                if (Artist.ToLower() == ArtistRequest.ToLower() | ArtistUnknown | IsVarious)
+                if (artist.ToLower() == artistRequest.ToLower() || artistUnknown || isVarious)
                 {
-                    string name = Album.name;
-                    JArray Images = Album.image;
+                    string name = album.name;
+                    JArray images = album.image;
 
-                    bool FoundAlbum = (name == AlbumRequest | name.ToLower() == AlbumRequest.ToLower() | name.ToLower().Replace(" ", "") == AlbumRequest.ToLower().Replace(" ", ""));
-                    bool FoundArtist = (Artist.ToLower() == ArtistRequest.ToLower());
+                    bool foundAlbum = name == albumRequest
+                        || name.ToLower() == albumRequest.ToLower()
+                        || name.ToLower().Replace(" ", "") == albumRequest.ToLower().Replace(" ", "");
+                    bool foundArtist = artist.ToLower() == artistRequest.ToLower();
 
-                    if (FoundAlbum | FoundArtist | (IsVarious & FoundAlbum))
+                    if (foundAlbum || foundArtist || (isVarious && foundAlbum))
                     {
-                        foreach (dynamic Image in Images)
+                        foreach (dynamic image in images)
                         {
-                            string url = Image["#text"];
-                            string size = Image["size"];
-                            if (!string.IsNullOrEmpty(url) & !string.IsNullOrEmpty(size))
-                                ImageList.Add(size, url);
+                            string url = image["#text"];
+                            string size = image["size"];
+                            if (!string.IsNullOrEmpty(url) && !string.IsNullOrEmpty(size))
+                                imageList.Add(size, url);
                         }
-                        if (ImageList.Count > 0)
+                        if (imageList.Count > 0)
                             break;
                     }
                 }
             }
 
-            if (ImageList.Count == 0)
-                return "";
+            if (imageList.Count == 0)
+                return null;
 
-            return ImageList.ContainsKey(imageSize) ? ImageList[imageSize] : ImageList.Values.Last();
+            return imageList.ContainsKey(ImageSize) ? imageList[ImageSize] : imageList.Values.Last();
         }
 
-        private string AlbumGetInfo_FindAlbumImg(JObject Json)
+        private string AlbumGetInfo_FindAlbumImg(JObject json)
         {
-            Dictionary<string, string> ImageList = new Dictionary<string, string>();
+            Dictionary<string, string> imageList = new Dictionary<string, string>();
+            JArray images = (json as dynamic).album.image;
 
-            dynamic DJson = Json;
-
-            JArray Images = DJson.album.image;
-
-            foreach (dynamic Image in Images)
+            foreach (dynamic image in images)
             {
-                string url = Image["#text"];
-                string size = Image["size"];
-                if (!string.IsNullOrEmpty(url) & !string.IsNullOrEmpty(size))
-                    ImageList.Add(size, url);
+                string url = image["#text"];
+                string size = image["size"];
+                if (!string.IsNullOrEmpty(url) && !string.IsNullOrEmpty(size))
+                    imageList.Add(size, url);
             }
 
-            if (ImageList.Count == 0)
-                return "";
+            if (imageList.Count == 0)
+                return null;
 
-            return ImageList.ContainsKey(imageSize) ? ImageList[imageSize] : ImageList.Values.Last();
+            return imageList.ContainsKey(ImageSize) ? imageList[ImageSize] : imageList.Values.Last();
         }
 
-        private void UpdatePresence(CurrentSongInfo SongInfo)
+        private void UpdatePresence(CurrentSongInfo songInfo)
         {
-            RichPresence presence = new RichPresence();
-            presence.Assets = new Assets();
-            presence.Party = new Party();
-            presence.Timestamps = new Timestamps();
-
-            presence.Assets.LargeImageKey = "albumart";
-
-            string yearStr  = SongInfo.YearStr;
-            string album    = SongInfo.Album;
-            string imageUrl = SongInfo.ImageUrl;
-            string track    = SongInfo.Track;
-            string artist   = SongInfo.Artist;
-            string url      = SongInfo.Url;
-            bool playing    = SongInfo.Playing;
-            int index       = SongInfo.Index;
-            int totalTracks = SongInfo.TotalTracks;
-
             string year = null;
 
-            if (yearStr.Length > 0 && config.showYear)
+            if (_config.ShowYear && songInfo.YearStr.Length > 0)
             {
-                DateTime result;
-
-                if (DateTime.TryParse(yearStr, out result))
+                if (DateTime.TryParse(songInfo.YearStr, out DateTime result))
                     year = result.Year.ToString();
                 else
-                    if (yearStr.Length == 4)
-                        if (DateTime.TryParseExact(yearStr, "yyyy", null, System.Globalization.DateTimeStyles.None, out result))
+                    if (songInfo.YearStr.Length == 4)
+                        if (DateTime.TryParseExact(songInfo.YearStr, "yyyy", null, System.Globalization.DateTimeStyles.None, out result))
                             year = result.Year.ToString();
             }
 
-            presence.Assets.LargeImageText = $"{album}" + ( (year != null && config.showYear) ? $" ({year})" : "" );
+            string bitrate = _mbApi.NowPlaying_GetFileProperty(FilePropertyType.Bitrate);
+            string codec = _mbApi.NowPlaying_GetFileProperty(FilePropertyType.Kind);
 
-            if (imageUrl != "" && imageUrl != "unknown")
-                presence.Assets.LargeImageKey = imageUrl;
-
-            string bitrate = mbApiInterface.NowPlaying_GetFileProperty(FilePropertyType.Bitrate);
-            string codec = mbApiInterface.NowPlaying_GetFileProperty(Plugin.FilePropertyType.Kind);
-
-            presence.State = $"by {artist}";
-            presence.Details = $"{track} [{mbApiInterface.NowPlaying_GetFileProperty(FilePropertyType.Duration)}]";
-
-            // Set the small image to the playback status.
-            if (playing)
+            RichPresence presence = new RichPresence
             {
-                presence.Assets.SmallImageKey = "playing";
-                presence.Assets.SmallImageText = $"{bitrate.Replace("k", "kbps")} [{codec}]";
-            }
-            else
+                State = $"by {songInfo.Artist}",
+                Details = $"{songInfo.Track} [{_mbApi.NowPlaying_GetFileProperty(FilePropertyType.Duration)}]",
+                Type = ActivityType.Listening,
+                Party = new Party
+                {
+                    Size = songInfo.Index,
+                    Max = songInfo.TotalTracks,
+                },
+                Timestamps = new Timestamps(),
+                Assets = new Assets
+                {
+                    LargeImageKey = songInfo.ImageUrl != "" && songInfo.ImageUrl != "unknown" ? songInfo.ImageUrl : "albumart",
+                    LargeImageText = $"{songInfo.Album}" + ((year != null && _config.ShowYear) ? $" ({year})" : ""),
+                    SmallImageKey = songInfo.Playing ? "playing" : "paused",
+                    SmallImageText = $"{bitrate.Replace("k", "kbps")} [{codec}]",
+                },
+            };
+
+            if (songInfo.Playing)
             {
-                presence.Assets.SmallImageKey = "paused";
-                presence.Assets.SmallImageText = "Paused";
-            }
+                long now = (long)DateTime.UtcNow.Subtract(new DateTime(1970, 1, 1)).TotalSeconds;
+                long duration = _mbApi.NowPlaying_GetDuration() / 1000;
+                long end = now + duration;
 
-            presence.Party.Size = index;
-            presence.Party.Max = totalTracks;
-
-            long now = (long)DateTime.UtcNow.Subtract(new DateTime(1970, 1, 1)).TotalSeconds;
-            long duration = this.mbApiInterface.NowPlaying_GetDuration() / 1000;
-            long end = now + duration;
-
-            if (playing)
-            {
-                long pos = (this.mbApiInterface.Player_GetPosition() / 1000);
+                long pos = _mbApi.Player_GetPosition() / 1000;
                 presence.Timestamps.Start = new DateTime(1970, 1, 1).AddSeconds(now - pos);
 
                 if (duration != -1)
                     presence.Timestamps.End = new DateTime(1970, 1, 1).AddSeconds(end - pos);
 
-                if (url.StartsWith("http"))
+                if (songInfo.Url.StartsWith("http"))
                 {
-                    presence.Buttons = new DiscordRPC.Button[]
+                    presence.Buttons = new[]
                     {
-                        new DiscordRPC.Button()
+                        new DiscordRPC.Button
                         {
                             Label = "Listen to stream",
-                            Url = url,
+                            Url = songInfo.Url,
                         }
                     };
                 }
             }
 
-            rpcClient.SetPresence(presence);
+            _rpcClient.SetPresence(presence);
         }
 
         public bool Configure(IntPtr panelHandle)
         {
             // save any persistent settings in a sub-folder of this path
-            string dataPath = mbApiInterface.Setting_GetPersistentStoragePath();
+            string dataPath = _mbApi.Setting_GetPersistentStoragePath();
             // panelHandle will only be set if you set about.ConfigurationPanelHeight to a non-zero value
             // keep in mind the panel width is scaled according to the font the user has selected
             // if about.ConfigurationPanelHeight is set to 0, you can display your own popup window
             if (panelHandle != IntPtr.Zero)
             {
-                newConfig = (Configuration) config.Clone();
+                _newConfig = (Configuration) _config.Clone();
 
                 Panel configPanel = (Panel) Panel.FromHandle(panelHandle);
 
-                CheckBox showYear = new CheckBox();
-                showYear.Text = "Show year next to album";
-                showYear.Height = 16;
-                showYear.ForeColor = Color.FromArgb(mbApiInterface.Setting_GetSkinElementColour(SkinElement.SkinInputPanelLabel, ElementState.ElementStateDefault, ElementComponent.ComponentForeground));
-                showYear.Checked = newConfig.showYear;
-                showYear.CheckedChanged += ShowYearValueChanged;
+                CheckBox showYear = new CheckBox
+                {
+                    Text = "Show year next to album",
+                    Height = 16,
+                    ForeColor = Color.FromArgb(
+                        _mbApi.Setting_GetSkinElementColour(
+                            SkinElement.SkinInputPanelLabel, ElementState.ElementStateDefault, ElementComponent.ComponentForeground
+                        )
+                    ),
+                    Checked = _newConfig.ShowYear,
+                };
+                showYear.CheckedChanged += (sender, _args) =>  _newConfig.ShowYear = (sender as CheckBox).Checked;
 
-                Label customArtworkUrlLabel = new Label();
-                customArtworkUrlLabel.Height = 16;
-                customArtworkUrlLabel.Width = 128;
-                customArtworkUrlLabel.ForeColor = Color.FromArgb(mbApiInterface.Setting_GetSkinElementColour(SkinElement.SkinInputPanelLabel, ElementState.ElementStateDefault, ElementComponent.ComponentForeground));
-                customArtworkUrlLabel.Text = "Custom Artwork URL";
-                customArtworkUrlLabel.Top = 24;
-                customArtworkUrlLabel.TextAlign = ContentAlignment.MiddleLeft;
+                /*
+                CheckBox showPausedTime = new CheckBox
+                {
+                    Text = "Show time when paused",
+                    Height = 16,
+                    ForeColor = Color.FromArgb(
+                        _mbApi.Setting_GetSkinElementColour(
+                            SkinElement.SkinInputPanelLabel, ElementState.ElementStateDefault, ElementComponent.ComponentForeground
+                        )
+                    ),
+                    Checked = _newConfig.ShowPausedTime,
+                };
+                showPausedTime.CheckedChanged += (sender, _args) =>  _newConfig.ShowPausedTime = (sender as CheckBox).Checked;
+                */
 
-                TextBox customArtworkUrl = (TextBox) mbApiInterface.MB_AddPanel(configPanel, PluginPanelDock.TextBox);
+                Label customArtworkUrlLabel = new Label
+                {
+                    Height = 16,
+                    Width = 128,
+                    ForeColor = Color.FromArgb(
+                        _mbApi.Setting_GetSkinElementColour(
+                            SkinElement.SkinInputPanelLabel, ElementState.ElementStateDefault, ElementComponent.ComponentForeground
+                        )
+                    ),
+                    Text = "Custom Artwork URL",
+                    Top = 24,
+                    TextAlign = ContentAlignment.MiddleLeft,
+                };
+
+                TextBox customArtworkUrl = (TextBox) _mbApi.MB_AddPanel(configPanel, PluginPanelDock.TextBox);
                 customArtworkUrl.Height = 16;
                 customArtworkUrl.Width = 192;
-                customArtworkUrl.ForeColor = Color.FromArgb(mbApiInterface.Setting_GetSkinElementColour(SkinElement.SkinInputPanelLabel, ElementState.ElementStateDefault, ElementComponent.ComponentForeground));
-                customArtworkUrl.Text = newConfig.customArtworkUrl;
-                customArtworkUrl.TextChanged += CustomArtworkUrlValueChanged;
+                customArtworkUrl.ForeColor = Color.FromArgb(
+                    _mbApi.Setting_GetSkinElementColour(
+                        SkinElement.SkinInputPanelLabel, ElementState.ElementStateDefault, ElementComponent.ComponentForeground
+                    )
+                );
+                customArtworkUrl.Text = _newConfig.CustomArtworkUrl;
                 customArtworkUrl.Top = 24;
                 customArtworkUrl.Left = customArtworkUrlLabel.Width;
+                customArtworkUrl.TextChanged += (sender, _args) => _newConfig.CustomArtworkUrl = (sender as TextBox).Text;
 
                 configPanel.Controls.AddRange(new Control[] { showYear, customArtworkUrlLabel, customArtworkUrl });
             }
             return false;
-        }
-
-        private void ShowYearValueChanged(object sender, EventArgs args) {
-            newConfig.showYear = (sender as CheckBox).Checked;
-        }
-
-        private void CustomArtworkUrlValueChanged(object sender, EventArgs args)
-        {
-            newConfig.customArtworkUrl = (sender as TextBox).Text;
         }
 
         // called by MusicBee when the user clicks Apply or Save in the MusicBee Preferences screen.
@@ -310,8 +304,8 @@ namespace MusicBeePlugin
         public void SaveSettings()
         {
             // save any persistent settings in a sub-folder of this path
-            string dataPath = mbApiInterface.Setting_GetPersistentStoragePath();
-            config = newConfig;
+            string dataPath = _mbApi.Setting_GetPersistentStoragePath();
+            _config = _newConfig;
             SaveConfig(dataPath);
         }
 
@@ -319,7 +313,7 @@ namespace MusicBeePlugin
         {
             DataContractSerializer dataContractSerializer = new DataContractSerializer(typeof(Plugin.Configuration));
             FileStream fileStream = new FileStream(Path.Combine(dataPath, "mb_DiscordRichPresence.xml"), FileMode.Create);
-            dataContractSerializer.WriteObject(fileStream, config);
+            dataContractSerializer.WriteObject(fileStream, _config);
             fileStream.Close();
         }
 
@@ -327,39 +321,38 @@ namespace MusicBeePlugin
         {
             DataContractSerializer dataContractSerializer = new DataContractSerializer(typeof(Plugin.Configuration));
             FileStream fileStream = new FileStream(Path.Combine(dataPath, "mb_DiscordRichPresence.xml"), FileMode.Open);
-            config = (Plugin.Configuration) dataContractSerializer.ReadObject(fileStream);
+            _config = (Plugin.Configuration) dataContractSerializer.ReadObject(fileStream);
             fileStream.Close();
         }
 
         // MusicBee is closing the plugin (plugin is being disabled by user or MusicBee is shutting down)
         public void Close(PluginCloseReason reason)
         {
-            rpcClient.ClearPresence();
-            rpcClient.Dispose();
+            _rpcClient.ClearPresence();
+            _rpcClient.Dispose();
         }
 
         // uninstall this plugin - clean up any persisted files
         public void Uninstall()
-        {
-        }
+        { }
 
         // receive event notifications from MusicBee
         // you need to set about.ReceiveNotificationFlags = PlayerEvents to receive all notifications, and not just the startup event
         public void ReceiveNotification(string sourceFileUrl, NotificationType type)
         {
-            string bitrate = mbApiInterface.NowPlaying_GetFileProperty(FilePropertyType.Bitrate);
-            string artist = mbApiInterface.NowPlaying_GetFileTag(MetaDataType.Artist);
-            string albumArtist = mbApiInterface.NowPlaying_GetFileTag(MetaDataType.AlbumArtist);
-            string trackTitle = mbApiInterface.NowPlaying_GetFileTag(MetaDataType.TrackTitle);
-            string album = mbApiInterface.NowPlaying_GetFileTag(MetaDataType.Album);
-            string year = mbApiInterface.NowPlaying_GetFileTag(MetaDataType.Year);
-            string url = mbApiInterface.NowPlaying_GetFileUrl();
-            int position = mbApiInterface.Player_GetPosition();
+            string bitrate = _mbApi.NowPlaying_GetFileProperty(FilePropertyType.Bitrate);
+            string artist = _mbApi.NowPlaying_GetFileTag(MetaDataType.Artist);
+            string albumArtist = _mbApi.NowPlaying_GetFileTag(MetaDataType.AlbumArtist);
+            string trackTitle = _mbApi.NowPlaying_GetFileTag(MetaDataType.TrackTitle);
+            string album = _mbApi.NowPlaying_GetFileTag(MetaDataType.Album);
+            string year = _mbApi.NowPlaying_GetFileTag(MetaDataType.Year);
+            string url = _mbApi.NowPlaying_GetFileUrl();
+            int position = _mbApi.Player_GetPosition();
 
             string originalArtist = artist;
 
             string[] tracks = null;
-            mbApiInterface.NowPlayingList_QueryFilesEx(null, ref tracks);
+            _mbApi.NowPlayingList_QueryFilesEx(null, ref tracks);
             int index = Array.IndexOf(tracks, url);
 
             // Check if there isn't an artist for the current song. If so, replace it with "(unknown artist)".
@@ -380,7 +373,7 @@ namespace MusicBeePlugin
             }
 
             if (type == NotificationType.PluginStartup)
-                LoadConfig(mbApiInterface.Setting_GetPersistentStoragePath());
+                LoadConfig(_mbApi.Setting_GetPersistentStoragePath());
 
             // perform some action depending on the notification type
             switch (type)
@@ -388,20 +381,20 @@ namespace MusicBeePlugin
                 case NotificationType.PluginStartup:
                 case NotificationType.PlayStateChanged:
                 case NotificationType.TrackChanged:
-                    bool isPlaying = mbApiInterface.Player_GetPlayState() == PlayState.Playing;
+                    bool isPlaying = _mbApi.Player_GetPlayState() == PlayState.Playing;
 
                     Task.Run(async () =>
                     {
                         try
                         {
                             string imageUrl = "";
-                            if (config.customArtworkUrl != "")
-                                imageUrl = config.customArtworkUrl + "?" + (long)DateTime.UtcNow.Subtract(new DateTime(1970, 1, 1)).TotalSeconds;
+                            if (_config.CustomArtworkUrl != "")
+                                imageUrl = _config.CustomArtworkUrl + "?" + (long)DateTime.UtcNow.Subtract(new DateTime(1970, 1, 1)).TotalSeconds;
                             else
                             {
-                                await FetchArt(trackTitle, originalArtist, albumArtist, album);
+                                await FetchArtAsync(trackTitle, originalArtist, albumArtist, album);
 
-                                imageUrl = albumArtCache[$"{albumArtist}_{album}"];
+                                imageUrl = _albumArtCache[$"{albumArtist}_{album}"];
                             }
 
                             UpdatePresence(new CurrentSongInfo
@@ -428,19 +421,11 @@ namespace MusicBeePlugin
 
         public class Configuration : ICloneable
         {
-            public Configuration()
-            {
-                this.showYear = true;
-                this.customArtworkUrl = "";
-            }
+            public bool ShowYear { get; set; } = true;
+            public string CustomArtworkUrl { get; set; } = "";
+            //public bool ShowPausedTime { get; set; } = false;
 
-            public bool showYear { get; set; }
-            public string customArtworkUrl { get; set; }
-
-            public object Clone()
-            {
-                return base.MemberwiseClone();
-            }
+            public object Clone() => MemberwiseClone();
         }
     }
 }
